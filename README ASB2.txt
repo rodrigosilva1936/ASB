@@ -222,4 +222,6 @@ Docker: (Docker version 27.5.1, build 27.5.1-0ubuntu3~24.04.2)
 Java: (Java version openjdk 21.0.7 2025-04-15)
 R: (R version 4.5.0 2025-04-11) 
 RStudio: (RStudio 2025.05.1 Build 513)
+Firefox 138.0.4(64-bit)
+Micromamba 2.0.8
 
