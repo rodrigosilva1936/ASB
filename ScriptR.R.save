@@ -1,0 +1,164 @@
+
+> # --- 0. Instalar e Carregar Pacotes Necessários ---
+> library(vegan)
+> library(ggplot2)
+> library(dplyr)
+> library(RColorBrewer)
+> library(ape)
+> 
+> # --- 1. Leitura e Preparação Inicial dos Dados ---
+> 
+> # 1.1. Ler tabela de dissimilaridade Bray-Curtis
+> beta_data <- read.delim("/home/rodrigo/drought_results/postprocessing/beta-div.tsv", sep = "\t", header = TRUE, stringsAsFactors = FALSE)
+> 
+> # 1.2. Criar matriz de distância para NMDS
+> samples <- unique(c(beta_data$comparison1, beta_data$comparison2))
+> dist_matrix <- matrix(NA, nrow = length(samples), ncol = length(samples),
++                       dimnames = list(samples, samples))
+> 
+> for (i in 1:nrow(beta_data)) {
++     s1 <- beta_data$comparison1[i]
++     s2 <- beta_data$comparison2[i]
++     bc <- beta_data$braycurtis[i]
++     dist_matrix[s1, s2] <- bc
++     dist_matrix[s2, s1] <- bc
++ }
+> diag(dist_matrix) <- 0
+> dist_object <- as.dist(dist_matrix)
+> 
+> # 1.3. Ler metadados do SRA (contém 'Host_diet')
+> metadata_sra <- read.csv("/home/rodrigo/Downloads/SraRunTable2.csv", header = TRUE, stringsAsFactors = FALSE)
+> metadata_sra$Sample <- trimws(metadata_sra$Run)
+> 
+> # 1.4. Ler o ficheiro de lagos (para 'Lake of origin')
+> metadata_lake <- read.csv("/home/rodrigo/Downloads/amostras_lago.csv", header = TRUE, stringsAsFactors = FALSE)
+> colnames(metadata_lake)[colnames(metadata_lake) == "Lake"] <- "Lake_of_Origin"
+> 
+> # 1.5. Mesclar metadados para ter Host_diet e Lake_of_Origin na mesma tabela
+> combined_metadata <- merge(metadata_sra, metadata_lake, by = "Sample", all.x = TRUE)
+> 
+> # Limpar as colunas de metadados
+> combined_metadata$Host_diet_Clean <- trimws(as.character(combined_metadata$Host_diet))
+> combined_metadata$Lake_of_Origin_Clean <- trimws(as.character(combined_metadata$Lake_of_Origin))
+> 
+> # Criar a coluna 'Grupo_Final' que combina dieta e lago
+> combined_metadata$Grupo_Final <- paste0(combined_metadata$Host_diet_Clean, "_", combined_metadata$Lake_of_Origin_Clean)
+> 
+> 
+> # --- INÍCIO DA CORREÇÃO PARA "subscript out of bounds" ---
+>
+> # Obter os nomes das amostras presentes na matriz de distância
+> samples_in_dist_matrix <- rownames(as.matrix(dist_object))
+> 
+> # Filtrar o combined_metadata para incluir APENAS as amostras que estão na matriz de distância
+> filtered_metadata_present_in_dist <- combined_metadata %>%
++     filter(Sample %in% samples_in_dist_matrix)
+> 
+> # Agora, a partir dessas amostras, filtre para 'benthic' e 'limnetic'
+> final_merged_data <- filtered_metadata_present_in_dist %>%
++     filter(Host_diet_Clean %in% c("benthic", "limnetic")) %>%
++     filter(!is.na(Grupo_Final) & Grupo_Final != "")
+> 
+> # Obter a lista final de amostras para o NMDS (apenas as que vamos plotar e que estão na dist_object)
+> samples_for_nmds <- final_merged_data %>% pull(Sample)
+> 
+> # --- FIM DA CORREÇÃO ---
+> 
+> 
+> # Filtrar a matriz de distância para incluir apenas essas amostras
+> # Esta linha agora deve funcionar, pois samples_for_nmds contém apenas IDs presentes em dist_object
+> dist_subset <- as.dist(as.matrix(dist_object)[samples_for_nmds, samples_for_nmds])
+> 
+> # Reordenar Grupo_Final para o plot, se necessário (para garantir ordem específica)
+> desired_group_order <- c(
++     "benthic_Paxton", "benthic_Priest", "benthic_Little Quarry",
++     "limnetic_Paxton", "limnetic_Priest", "limnetic_Little Quarry"
++ )
+> # Garantir que apenas os níveis presentes nos dados sejam mantidos, para evitar warnings no plot se um grupo não existir
+> actual_groups_present <- intersect(desired_group_order, unique(final_merged_data$Grupo_Final))
+> final_merged_data$Grupo_Final <- factor(final_merged_data$Grupo_Final, levels = actual_groups_present)
+> 
+> 
+> # --- 2. Realizar a Ordenação NMDS ---
+> # Usar a matriz de distância SUBSETADA
+> nmds_result <- metaMDS(dist_subset, autotransform = FALSE, wascores = FALSE, k = 2, trymax = 100)
+Run 0 stress 0.2053495 
+Run 1 stress 0.1877764 
+... New best solution
+... Procrustes: rmse 0.1151808  max resid 0.3513582 
+Run 2 stress 0.2149147 
+Run 3 stress 0.1990091 
+Run 4 stress 0.206743 
+Run 5 stress 0.2187139 
+Run 6 stress 0.2099467 
+Run 7 stress 0.219488 
+Run 8 stress 0.2150875 
+Run 9 stress 0.2061764 
+Run 10 stress 0.2008518 
+Run 11 stress 0.2181808 
+Run 12 stress 0.230674 
+Run 13 stress 0.2156538 
+Run 14 stress 0.2118462 
+Run 15 stress 0.2196367 
+Run 16 stress 0.2106503 
+Run 17 stress 0.2102209 
+Run 18 stress 0.2156537 
+Run 19 stress 0.1877764 
+... Procrustes: rmse 1.375325e-05  max resid 4.225808e-05 
+... Similar to previous best
+Run 20 stress 0.2065764 
+*** Best solution repeated 1 times
+> 
+> # Verificar o stress do NMDS (opcional, mas recomendado)
+> print(paste("NMDS Stress:", nmds_result$stress))
+[1] "NMDS Stress: 0.187776400523979"
+> plot(nmds_result, type = "t") # Visualizar o resultado do NMDS
+species scores not available
+> 
+> # Extrair os scores NMDS para plotagem
+> nmds_scores <- as.data.frame(scores(nmds_result, display = "sites"))
+> nmds_scores$Sample <- rownames(nmds_scores)
+> 
+> # Mesclar os scores NMDS com os dados de metadados filtrados
+> final_nmds_data_for_plot <- merge(nmds_scores, final_merged_data[, c("Sample", "Grupo_Final", "Host_diet_Clean")], by = "Sample", all.x = TRUE)
+> 
+> # Remover quaisquer NAs remanescentes no 'Grupo_Final' (caso haja amostras na matriz de distância que não estão nos metadados filtrados)
+> final_nmds_data_for_plot <- final_nmds_data_for_plot %>%
++     filter(!is.na(Grupo_Final))
+> 
+> 
+> # --- 3. Calcular os Hulls (Envelopes Convexos) para cada grupo combinado ---
+> hulls <- final_nmds_data_for_plot %>%
++     group_by(Grupo_Final) %>%
++     slice(chull(NMDS1, NMDS2))
+> 
+> # --- 4. Plotar o NMDS com Hulls usando ggplot2 ---
+> 
+> # Definir paleta de cores e formas com base no número de grupos de dieta-lago únicos
+> num_unique_groups <- length(unique(final_nmds_data_for_plot$Grupo_Final))
+> 
+> # Use paletas 'qualitative' do RColorBrewer. Set1, Set2, Dark2 são boas.
+> # Você precisará de cores suficientes para todos os grupos 'benthic_Lake' e 'limnetic_Lake'.
+> colors_for_groups <- brewer.pal(min(num_unique_groups, 8), "Dark2") # Use 8 se tiver até 8, ou ajuste se precisar de mais.
+> if (num_unique_groups > 8) { # Se tiver mais de 8 grupos, combine ou crie manualmente
++     # Exemplo simples, pode precisar de mais cores dependendo do número final de grupos
++     colors_for_groups <- c(brewer.pal(8, "Dark2"), brewer.pal(min(num_unique_groups - 8, 8), "Set2"))
++ }
+> # Para mais controlo, você pode definir cores manualmente, exemplo:
+> # colors_for_groups <- c("benthic_Paxton" = "red", "benthic_Priest" = "darkred", "benthic_Little Quarry" = "orange",
+> #                        "limnetic_Paxton" = "blue", "limnetic_Priest" = "darkblue", "limnetic_Little Quarry" = "lightblue")
+> 
+> shapes_for_groups <- c(16, 17, 15, 18, 8, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12)[1:num_unique_groups]
+> 
+> ggplot(final_nmds_data_for_plot, aes(x = NMDS1, y = NMDS2, color = Grupo_Final, fill = Grupo_Final)) +
++     geom_point(size = 3, aes(shape = Grupo_Final)) + # Pontos coloridos e com formas
++     geom_polygon(data = hulls, alpha = 0.3, show.legend = FALSE) + # Polígonos de hull com transparência
++     scale_color_manual(values = colors_for_groups) + # Cores personalizadas
++     scale_shape_manual(values = shapes_for_groups) + # Formas personalizadas
++     labs(title = "NMDS da Composição do Microbioma por Dieta e Lago (Benthic e Limnetic)",
++          x = "NMDS1",
++          y = "NMDS2",
++          color = "Grupo (Dieta_Lago)", # Legenda de cores
++          fill = "Grupo (Dieta_Lago)") + # Legenda de preenchimento
++     theme_minimal() +
++     theme(legend.position = "right")
